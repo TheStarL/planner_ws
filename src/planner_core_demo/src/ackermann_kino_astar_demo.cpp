@@ -69,17 +69,11 @@ class AckermannKinoAStarDemoNode : public rclcpp::Node
 public:
   AckermannKinoAStarDemoNode() : Node("ackermann_kino_astar_demo_node")
   {
-    RCLCPP_INFO(this->get_logger(), "constructor start");
     marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
       "/planner_core_demo/markers", 10);
 
     initParams();
-    RCLCPP_INFO(this->get_logger(), "params done, scenario=%s, obstacles count will follow",
-      scenario_.c_str());
-
     generateObstacles();
-    RCLCPP_INFO(this->get_logger(), "obstacles generated: %zu", obstacles_.size());
-
     runKinoAStar();
 
     timer_ = this->create_wall_timer(
@@ -319,17 +313,14 @@ private:
   // ================================================================ search
   bool runKinoAStar()
   {
-    RCLCPP_INFO(this->get_logger(), "search start");
     const auto t0 = std::chrono::steady_clock::now();
 
     if (!isStateValid(start_state_)) {
       RCLCPP_ERROR(this->get_logger(), "Start state invalid.");
       return false;
     }
-    RCLCPP_INFO(this->get_logger(), "start state valid");
 
     const auto controls = generateControlSamples();
-    RCLCPP_INFO(this->get_logger(), "controls: %zu samples", controls.size());
 
     std::vector<KinoNode> nodes;
     std::priority_queue<QueueItem> open_set;
@@ -351,7 +342,6 @@ private:
     open_set.push(QueueItem{start_node.f_score, 0});
 
     int final_id = -1, expand = 0;
-    RCLCPP_INFO(this->get_logger(), "entering search loop");
 
     while (!open_set.empty() && expand < max_expand_num_) {
       QueueItem item = open_set.top(); open_set.pop();
