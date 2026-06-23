@@ -89,7 +89,8 @@ public:
     }
 
     timer_ = this->create_wall_timer(200ms, [this]() {
-      publishMap(); publishPath(); publishStartGoal(); publishTF();
+      publishMap(); publishPath(); publishStartGoal(); 
+      // publishTF();
     });
     RCLCPP_INFO(this->get_logger(), "ego_planner started.");
   }

@@ -8,12 +8,23 @@ find_package(geometry_msgs REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 # --- ackermann_teleop ---
 add_executable(ackermann_teleop src/ackermann_teleop.cpp)
 ament_target_dependencies(ackermann_teleop
-  rclcpp ackermann_msgs)
+  rclcpp geometry_msgs)
+
+# --- tf_odometry_relay (republishes steering controller's ~/tf_odometry to /tf) ---
+add_executable(tf_odometry_relay src/tf_odometry_relay.cpp)
+ament_target_dependencies(tf_odometry_relay
+  rclcpp tf2_msgs)
+
+# --- auto_explore (hands-free bounded coverage for SLAM mapping) ---
+add_executable(auto_explore src/auto_explore.cpp)
+ament_target_dependencies(auto_explore
+  rclcpp nav_msgs geometry_msgs)
 
 # --- kino_astar_planner ---
 add_executable(kino_astar_planner src/kino_astar_planner.cpp)
@@ -35,6 +46,8 @@ target_link_libraries(ego_planner yaml-cpp)
 
 install(TARGETS
   ackermann_teleop
+  tf_odometry_relay
+  auto_explore
   kino_astar_planner
   bspline_planner
   ego_planner

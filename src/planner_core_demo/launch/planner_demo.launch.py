@@ -54,12 +54,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    # Force software OpenGL + disable X11 MIT-SHM so RViz2 does not crash on
+    # WSL2 / remote-X setups that lack a usable hardware GL driver.
+    # (Equivalent to the `rviz2_sw` shell alias:
+    #  LIBGL_ALWAYS_SOFTWARE=1 QT_X11_NO_MITSHM=1 rviz2)
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         arguments=['-d', default_rviz],
         condition=IfCondition(use_rviz),
+        additional_env={
+            'LIBGL_ALWAYS_SOFTWARE': '1',
+            'QT_X11_NO_MITSHM': '1',
+        },
         output='screen',
     )
 

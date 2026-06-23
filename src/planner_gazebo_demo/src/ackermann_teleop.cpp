@@ -1,29 +1,39 @@
 // ackermann_teleop.cpp
 //
-// Keyboard teleop node for the Ackermann car.
-// Publishes AckermannDriveStamped on /ackermann_cmd.
-// Controls: w/s = speed up/down, a/d = steer left/right, space = stop.
+// Keyboard teleop for the Ackermann car.
+//
+// IMPORTANT: the ros2_controllers AckermannSteeringController subscribes to a
+// plain geometry_msgs/msg/Twist on `~/reference_unstamped` (verified at runtime:
+// /ackermann_steering_controller/reference has NO subscriber, while
+// /ackermann_steering_controller/reference_unstamped has the controller as
+// subscriber). It interprets twist.linear.x as forward speed [m/s] and
+// twist.angular.z as yaw rate [rad/s], and internally converts (v, w) to the
+// rear-wheel speed and Ackermann steering angle. So we publish Twist there.
+//
+// Controls: w/s = speed +/-, a/d = turn left/right (yaw rate), space = stop, q = quit.
 
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
-#include <ackermann_msgs/msg/ackermann_drive_stamped.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 
 class AckermannTeleop : public rclcpp::Node
 {
 public:
   AckermannTeleop() : Node("ackermann_teleop")
   {
-    pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(
-      "/ackermann_steering_controller/reference", 10);
+    pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
+      "/ackermann_steering_controller/reference_unstamped", 10);
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(50),
       std::bind(&AckermannTeleop::timerCallback, this));
     RCLCPP_INFO(this->get_logger(),
-      "Teleop ready: w/s=speed, a/d=steer, space=stop, q=quit");
+      "Teleop ready: w/s=speed, a/d=turn, space=stop, q=quit "
+      "(publishing Twist -> /ackermann_steering_controller/reference_unstamped)");
   }
 
   void spin()
@@ -40,13 +50,13 @@ public:
         switch (c) {
           case 'w': speed_ += 0.2; break;
           case 's': speed_ -= 0.2; break;
-          case 'a': steering_ += 0.1; break;
-          case 'd': steering_ -= 0.1; break;
-          case ' ': speed_ = 0.0; steering_ = 0.0; break;
+          case 'a': yaw_rate_ += 0.1; break;
+          case 'd': yaw_rate_ -= 0.1; break;
+          case ' ': speed_ = 0.0; yaw_rate_ = 0.0; break;
           case 'q': rclcpp::shutdown(); break;
         }
         speed_ = std::clamp(speed_, -2.0, 2.0);
-        steering_ = std::clamp(steering_, -0.61, 0.61);
+        yaw_rate_ = std::clamp(yaw_rate_, -1.5, 1.5);
       }
       rclcpp::spin_some(shared_from_this());
     }
@@ -56,18 +66,16 @@ public:
 private:
   void timerCallback()
   {
-    ackermann_msgs::msg::AckermannDriveStamped msg;
-    msg.header.stamp = this->now();
-    msg.header.frame_id = "base_link";
-    msg.drive.speed = speed_;
-    msg.drive.steering_angle = steering_;
+    geometry_msgs::msg::Twist msg;
+    msg.linear.x = speed_;
+    msg.angular.z = yaw_rate_;
     pub_->publish(msg);
   }
 
-  rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr pub_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr timer_;
   double speed_ = 0.0;
-  double steering_ = 0.0;
+  double yaw_rate_ = 0.0;
 };
 
 int main(int argc, char ** argv)

@@ -124,7 +124,7 @@ public:
       publishMap();
       publishPath();
       publishStartGoal();
-      publishTF();
+      // publishTF();
     });
 
     RCLCPP_INFO(this->get_logger(), "kino_astar_planner started.");

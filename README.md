@@ -7,7 +7,17 @@
 > 本 README 是**团队协作主文档**：包含每个文件的职责、运行方式、参数、可视化说明、代码结构与后续改进点。
 > 详细实验数据见 [`report/性能评估报告.md`](report/性能评估报告.md)。
 
-- **环境**：Ubuntu 22.04 · ROS 2 Humble · colcon · C++17（仅依赖 `rclcpp` 与标准消息，无第三方库）
+项目目前包含**三条互补的实现轨道**，覆盖同一套 Fast-Planner / EGO-Planner 算法：
+
+| 轨道 | 所在包 | 机器人模型 | 依赖 | 在本机能否运行 |
+|---|---|---|---|---|
+| **A. 质点轨道** | `planner_core_demo`（`*_demo`） | 3D 二阶积分点质量 | 仅 `rclcpp` + 标准消息 | ✅ 可直接编译运行 |
+| **B. 车辆（Ackermann）轨道** | `planner_core_demo`（`ackermann_*`） | 2D 自行车模型 + 纯跟踪 | 仅 `rclcpp` + 标准消息 | ✅ 可直接编译运行 |
+| **C. Gazebo 物理仿真** | `planner_gazebo_demo` | URDF Ackermann 整车 + SLAM 建图 | Gazebo / slam_toolbox 等 | ⚠️ 需先 `apt` 安装依赖（见 §3.4） |
+
+- **环境**：Ubuntu 22.04 · ROS 2 Humble · colcon · C++17
+- **轨道 A/B**：仅依赖 `rclcpp` 与标准消息，无第三方库，开箱即编。
+- **轨道 C**：另需安装 Gazebo 与导航相关包（`gazebo_ros_pkgs`、`gazebo_ros2_control`、`ackermann_steering_controller`、`ackermann_msgs`、`slam_toolbox`、`nav2_map_server` 等），见 §3.4。
 
 ---
 
@@ -33,23 +43,46 @@ planner_ws/
 │   ├── 性能评估报告.md                # 任务⑤评估报告（含实验环境对照表，先读这里）
 │   └── benchmark_results.csv          # planner_benchmark 导出的原始数据
 └── src/
-    ├── planner_core_demo/             # 核心包：前端/后端/EGO/闭环/评估/感知建图
+    ├── planner_core_demo/             # 核心包：轨道 A（质点）+ 轨道 B（Ackermann）
     │   ├── CMakeLists.txt             # 用 foreach 统一编译所有可执行；安装 launch/ 与 rviz/
     │   ├── package.xml                # 依赖声明（rclcpp + 标准消息 + launch/rviz 运行依赖）
     │   ├── launch/
-    │   │   ├── planner_demo.launch.py # 启动指定 demo + RViz（参数 demo / rviz）
+    │   │   ├── planner_demo.launch.py # 启动指定 demo + RViz + world→map 静态 TF（参数 demo / rviz）
     │   │   └── benchmark.launch.py    # 启动批量评估（参数 num_trials / output_csv）
     │   ├── rviz/
     │   │   └── planner_demo.rviz       # RViz 配置：订阅三个 Marker 话题
     │   └── src/
+    │       │ # —— 轨道 A：3D 质点 —————————————————————————
     │       ├── random_map_demo.cpp     # 随机盒式障碍地图生成与发布（基础）
     │       ├── astar_grid_demo.cpp     # 3D 栅格 A\* 基线（对照 Kinodynamic）
     │       ├── kino_astar_demo.cpp     # 任务① Fast-Planner 前端 Kinodynamic A\*
     │       ├── bspline_backend_demo.cpp# 任务② 真实 ESDF 距离场 + B样条梯度优化后端
     │       ├── ego_planner_demo.cpp    # 任务③ EGO(无ESDF) vs ESDF 后端效率对比
-    │       ├── closed_loop_demo.cpp    # 任务④ 感知-规划-控制闭环（含动态障碍+滚动重规划+噪声）
+    │       ├── closed_loop_demo.cpp    # 任务④ 感知-规划-控制闭环（动态障碍+滚动重规划+噪声）
     │       ├── planner_benchmark.cpp   # 任务⑤ 批量随机评估，导出 CSV
-    │       └── mapping_demo.cpp        # 环境升级：有限视场传感器 + 增量占据/ESDF 建图
+    │       ├── mapping_demo.cpp        # 环境升级：有限视场传感器 + 增量占据/ESDF 建图
+    │       │ # —— 轨道 B：2D Ackermann 车辆（自行车模型）————————
+    │       ├── ackermann_kino_astar_demo.cpp  # 任务① 车辆版：(x,y,θ,v) 状态 + 自行车运动学前端
+    │       ├── ackermann_bspline_demo.cpp     # 任务② 车辆版：B样条 + ESDF + 曲率(最小转弯半径)约束
+    │       ├── ackermann_ego_demo.cpp         # 任务③ 车辆版：EGO vs ESDF（2D）效率对比
+    │       └── ackermann_closed_loop_demo.cpp # 任务④ 车辆版：纯跟踪(Pure Pursuit)闭环 + 动态重规划
+    ├── planner_gazebo_demo/           # 轨道 C：Gazebo 物理仿真 + SLAM 建图 + 栅格地图规划
+    │   ├── CMakeLists.txt
+    │   ├── package.xml                # 依赖 gazebo / slam_toolbox / ackermann_* 等（需 apt 安装）
+    │   ├── urdf/ackermann_car.xacro    # Ackermann 整车模型（含激光雷达、转向/驱动关节）
+    │   ├── worlds/planner_world.sdf     # Gazebo 障碍世界
+    │   ├── config/ackermann_control.yaml# ros2_control 控制器配置
+    │   ├── launch/
+    │   │   ├── slam.launch.py           # 阶段1：Gazebo + 整车 + slam_toolbox 在线建图 + RViz
+    │   │   └── planner.launch.py        # 阶段2：加载已保存 PGM/YAML 地图 + 选定规划器 + RViz
+    │   ├── rviz/{slam,planner}.rviz
+    │   ├── maps/                        # SLAM 保存的 PGM+YAML 栅格地图（运行后生成）
+    │   └── src/
+    │       ├── map_loader.hpp           # 手写解析 PGM(P5)+YAML，提供栅格碰撞查询
+    │       ├── ackermann_teleop.cpp     # 键盘遥控整车（发 AckermannDriveStamped 到控制器）
+    │       ├── kino_astar_planner.cpp   # 在 OccupancyGrid 上跑 Kino A*，发 nav_msgs/Path
+    │       ├── bspline_planner.cpp      # 栅格地图上 B样条 + ESDF 优化
+    │       └── ego_planner.cpp          # 栅格地图上 EGO(无ESDF) 优化（前端+后端各发一条 Path）
     └── planner_visualization_demo/    # 辅助包：最简 RViz Marker 教学示例
         ├── CMakeLists.txt
         ├── package.xml
@@ -77,37 +110,95 @@ planner_ws/
 | `random_map_demo` | 基础 | 随机生成盒式障碍地图并发布（教学/地图生成基础） | `/planner_core_demo/markers` | 无 |
 | `astar_grid_demo` | 基础 | **3D 栅格 A\***（占据栅格上的标准 A\*），作为 Kinodynamic 前端的对照基线 | `/planner_core_demo/markers` | 无 |
 
-### 3.2 `planner_visualization_demo` 包
+### 3.2 `planner_core_demo` 包 —— 轨道 B：Ackermann 车辆版
+
+把同一套算法换到**车辆（自行车）模型**上：状态 `(x, y, θ, v)`，控制量为 `(速度, 前轮转角 δ)`，
+运动学 `ẋ=v·cosθ, ẏ=v·sinθ, θ̇=v·tanδ/L`（轴距 L=1.5 m，δ_max=35°，巡航 1.5 m/s）。
+与质点版最大的不同：可行性约束从“加速度上限”变成**曲率上限**（最小转弯半径 κ_max=tanδ/L≈0.467 m⁻¹），
+控制器换成 **Pure Pursuit 纯跟踪**。话题与质点版复用，故 RViz 配置通用。
+
+| 节点 | 任务 | 与质点版的差异 | 发布话题 | 可调 ROS 参数 |
+|---|---|---|---|---|
+| `ackermann_kino_astar_demo` | ① | 前端搜索改为自行车运动基元（采样转角 δ），生成满足最小转弯半径的可行路径 | `/planner_core_demo/markers` | `scenario`（`dense`/`narrow`/`clustered`） |
+| `ackermann_bspline_demo` | ② | 后端在 2D ESDF 上优化，可行性项改为**曲率惩罚**；打印优化前后平滑度 / 最大曲率 | `/planner_core_demo/markers` | `scenario` |
+| `ackermann_ego_demo` | ③ | 同一前端路径并行跑 2D-ESDF 后端与 EGO 后端，打印耗时/曲率/加速比 | `/planner_core_demo/markers` | `scenario` |
+| `ackermann_closed_loop_demo` | ④ | Pure Pursuit 跟踪 + 动态障碍 + 滚动重规划；额外发 `/ackermann_cmd` 预留 Gazebo 对接 | `/planner_core_demo/closed_loop_markers`、`/closed_loop_demo/odom` | `dynamic`(bool)、`replan_period`(s)、`scenario` |
+
+> **注意（指标口径）**：`ackermann_closed_loop_demo` 打印的 `err` 是机器人到**前视目标点**（look-ahead，1.8 m）的距离，
+> 是纯跟踪的固有量，**不是横向跟踪误差**，故其 RMS 不能与质点版的横向 RMS 直接比较；接近终点时前视点退化为终点，`err` 自然降到 0。
+
+### 3.3 `planner_visualization_demo` 包
 
 | 节点 | 功能 | 发布话题 |
 |---|---|---|
 | `marker_demo` | 最简 RViz Marker 示例（一条 LINE_STRIP 折线 + 起终点 SPHERE），用于熟悉 Marker 可视化 | `/planner_demo/markers` |
 
-### 3.3 运行命令
+### 3.4 运行命令（轨道 A / B）
+
+轨道 A、B 同属 `planner_core_demo` 包，编译后即可运行：
 
 ```bash
-# 通用：启动某个 demo + RViz（demo 取上表任一 planner_core_demo 节点名）
+cd ~/planner_ws && colcon build --packages-select planner_core_demo && source install/setup.bash
+
+# —— 轨道 A：质点版（demo 取上表任一节点名）——
 ros2 launch planner_core_demo planner_demo.launch.py demo:=kino_astar_demo
 ros2 launch planner_core_demo planner_demo.launch.py demo:=bspline_backend_demo
 ros2 launch planner_core_demo planner_demo.launch.py demo:=ego_planner_demo
 ros2 launch planner_core_demo planner_demo.launch.py demo:=mapping_demo
 ros2 launch planner_core_demo planner_demo.launch.py demo:=ego_planner_demo rviz:=false  # 不开 RViz
 
-# 任务④ 闭环：默认动态+重规划+噪声
+# 任务④ 质点闭环：默认动态+重规划+噪声；切回静态理想基线：
 ros2 launch planner_core_demo planner_demo.launch.py demo:=closed_loop_demo
-# 切回静态理想基线：
 ros2 run planner_core_demo closed_loop_demo --ros-args -p dynamic:=false -p disturbance:=false
 
 # 感知建图：调节传感器
 ros2 run planner_core_demo mapping_demo --ros-args -p sensor_range:=2.5 -p sensor_fov_deg:=90
 
-# 任务⑤ 批量评估并导出 CSV
+# —— 轨道 B：Ackermann 车辆版 ——
+ros2 launch planner_core_demo planner_demo.launch.py demo:=ackermann_kino_astar_demo
+ros2 launch planner_core_demo planner_demo.launch.py demo:=ackermann_bspline_demo
+ros2 launch planner_core_demo planner_demo.launch.py demo:=ackermann_ego_demo
+ros2 launch planner_core_demo planner_demo.launch.py demo:=ackermann_closed_loop_demo
+# 切换场景 / 关闭动态障碍：
+ros2 run planner_core_demo ackermann_kino_astar_demo --ros-args -p scenario:=narrow
+ros2 run planner_core_demo ackermann_closed_loop_demo --ros-args -p dynamic:=false
+
+# —— 任务⑤ 批量评估并导出 CSV ——
 ros2 launch planner_core_demo benchmark.launch.py num_trials:=30 \
      output_csv:=$HOME/planner_ws/report/benchmark_results.csv
-
-# 单独运行某节点（不经 launch）
-ros2 run planner_core_demo ego_planner_demo
 ```
+
+### 3.5 运行命令（轨道 C：Gazebo 物理仿真，`planner_gazebo_demo`）
+
+这是一条**完整的「Gazebo 建图 → 保存地图 → 栅格规划」三阶段流水线**，更贴近真实部署，但依赖较重。
+
+**前置：安装依赖**（本仓库不含这些二进制包，需联网安装）：
+
+```bash
+sudo apt update && sudo apt install -y \
+  ros-humble-gazebo-ros-pkgs ros-humble-gazebo-ros2-control \
+  ros-humble-ackermann-steering-controller ros-humble-ackermann-msgs \
+  ros-humble-slam-toolbox ros-humble-nav2-map-server ros-humble-xacro
+colcon build --packages-select planner_gazebo_demo && source install/setup.bash
+```
+
+**阶段 1：Gazebo 在线 SLAM 建图**
+
+```bash
+ros2 launch planner_gazebo_demo slam.launch.py          # 起 Gazebo + 整车 + slam_toolbox + RViz
+ros2 run planner_gazebo_demo ackermann_teleop           # 另开终端：w/s 加减速, a/d 转向, 空格停
+# 绕场一周后保存地图：
+ros2 run nav2_map_server map_saver_cli -f src/planner_gazebo_demo/maps/planner_map
+```
+
+**阶段 2：在保存的栅格地图上规划**（planner 取 `kino_astar` / `bspline` / `ego`）
+
+```bash
+ros2 launch planner_gazebo_demo planner.launch.py planner:=ego
+```
+
+> 规划器读取 PGM+YAML 占据栅格，发布 `nav_msgs/OccupancyGrid`(`/map`) 与 `nav_msgs/Path`(`/planner/path`)，
+> 在 RViz 用 Map / Path / TF 显示（不再用 Marker）。起点 (-7,-6,0.706 rad)，终点 (7,6)。
 
 ---
 
@@ -122,6 +213,9 @@ ros2 run planner_core_demo ego_planner_demo
 | `/planner_core_demo/mapping_markers` | `mapping_demo` | 真值世界(半透明灰幽灵)、已知占据(红立柱)/已知自由(绿地块)、传感器视场(黄扇形)、参考/实际轨迹、机器人 |
 
 > 注：当前为无显示环境时只能验证节点端逻辑；在带桌面的机器上 `mapping_demo` 可直观看到地图“边走边点亮”。
+> 轨道 B（`ackermann_*`）复用上表前两个话题，无需额外配置。
+> 轨道 C（`planner_gazebo_demo`）**不用 Marker**，改用 `nav_msgs/OccupancyGrid`(`/map`) + `nav_msgs/Path`(`/planner/path`) + TF + RobotModel，
+> 已随包提供 `rviz/slam.rviz`（建图阶段）与 `rviz/planner.rviz`（规划阶段），由对应 launch 自动加载。
 
 ---
 
@@ -145,11 +239,20 @@ ros2 run planner_core_demo ego_planner_demo
 ⚠️ **报告中的指标来自 4 套不同环境，并非全部同源**，横向对比前请阅读
 [`report/性能评估报告.md`](report/性能评估报告.md) 开头的“实验环境对照表”。概要结论：
 
+**轨道 A（质点）**
 - **任务② 后端 ESDF 优化**：平滑度代价 ↓ ~135×，最小障碍距离 0.286→0.543 m，最大加速度 6.4→2.36 m/s²，三目标同步改善且无碰撞。
-- **任务③ EGO vs ESDF**：平均加速比 ≈ **42×**（省去 ESDF 距离场构建），轨迹质量相当。
+- **任务③ EGO vs ESDF**：30 组批量平均加速比 ≈ **44×**（区间 22.7–48.4×，省去 3D ESDF 距离场构建），轨迹质量相当。
 - **任务④ 闭环**：静态与动态(37 次实时重规划+噪声)两模式均 RMS ≈ 0.13 m、0 碰撞到达。
 - **感知不作弊（mapping）**：3.5 m/120° 传感器，初始一无所知，沿途发现 14/23 障碍、3 次前端全重规划，**0 次真值碰撞**到达。
 - **任务⑤ 批量(30 组随机)**：前端成功率 100%，避障成功率 96.7%。
+
+**轨道 B（Ackermann 车辆，3 档确定性场景 dense/narrow/clustered，详见报告 §10）**
+- **任务①**：前端规划时间 132.6 / 154.1 / 466.6 ms，轨迹长 19.20 / 20.40 / 21.60 m，**3/3 无碰撞（避障 100%）**，均满足最小转弯半径。
+- **任务②**：平滑度降低 155×–232×，最大曲率 ≤0.128 ≪ 限制 0.4668（仅占 27%，始终可行驶），优化耗时 ~1.3 ms。
+- **任务③**：2D-ESDF 后端 8.8–15.2 ms vs EGO 6.8–12.3 ms，**加速比仅 1.23–1.29×** ——因为 **2D 距离场构建很便宜**（8–15 ms），EGO 的“省去建场”优势在 2D 小图上不明显；EGO 的真正优势体现在轨道 A 的 3D 大图（批量均值 44×、单图最高 52×）。这是一个诚实的对照结论。
+- **任务④**：前后端规划均成功、Pure Pursuit 沿路径行驶并持续滚动重规划（~3.8 次/s），但**车辆最终停在距终点 0.31–0.74 m 处、未跨过到达阈值**（Pure Pursuit 末端收敛局限，详见报告 §10.4）——已知局限，非规划本身问题。
+
+> ⚠️ **轨道 B 的 EGO 加速比（1.24–1.29×）远小于轨道 A（批量 44×）属于预期**：EGO 省的是“构建全局 ESDF”的开销，这一开销随地图维度/分辨率急剧增长——3D 大图里它是瓶颈，2D 小图里它本就很小。
 
 ---
 
@@ -177,12 +280,13 @@ ros2 run planner_core_demo ego_planner_demo
 
 **仿真环境**
 - [ ] 把动态障碍 / 感知建图场景纳入 `planner_benchmark`，统计动态避障成功率与探索覆盖率。
-- [ ] 增加**窄通道/迷宫/森林**等难度分级地图，压力测试避障成功率。
-- [ ] 更真实机器人模型：差速 / Ackermann / 四旋翼动力学 + 姿态环（替换二阶积分点质量）。
+- [ ] 增加**窄通道/迷宫/森林**等难度分级地图，压力测试避障成功率（轨道 B 已有 `dense/narrow/clustered` 三档场景，可推广到其余节点）。
+- [x] 更真实机器人模型：**Ackermann 自行车模型（轨道 B）+ Gazebo 整车物理仿真（轨道 C）已落地**；后续可补差速 / 四旋翼动力学 + 姿态环。
 - [ ] 场景与参数**从 YAML/ROS 参数加载**，替代写死在 `initParams()`（便于批量实验）。
 
 **工程化**
-- [ ] 抽出公共库：把前端 Kino A\*、B样条、ESDF、度量函数提到 `include/planner_core_demo/` 的共享头/库，消除多文件重复。
-- [ ] 定义自定义消息（轨迹/控制点）并发布，便于与真实控制器或 Gazebo 对接。
+- [ ] 抽出公共库：把前端 Kino A\*、B样条、ESDF、度量函数提到 `include/planner_core_demo/` 的共享头/库，消除轨道 A/B 间的多文件重复。
+- [x] 与 Gazebo 对接：轨道 C 已通过 `ros2_control` + `ackermann_steering_controller` 驱动整车，并用 `slam_toolbox` 在线建图；后续可把 `/planner/path` 接回闭环控制器形成 Gazebo 内全闭环。
+- [ ] 把轨道 B 的 `ackermann_closed_loop_demo` 的 `/ackermann_cmd` 真正接到 Gazebo 整车（当前为预留话题）。
 - [ ] 增加单元测试（`ament_cmake_gtest`）与 CI；接入 `rosbag` 录制评估。
 
