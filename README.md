@@ -361,3 +361,5 @@ ros2 launch planner_gazebo_demo gazebo_closed_loop.launch.py planner:=ego
 - [ ] 把轨道 B 的 `ackermann_closed_loop_demo` 的 `/ackermann_cmd` 真正接到 Gazebo 整车（当前为预留话题）。
 - [ ] 增加单元测试（`ament_cmake_gtest`）与 CI；接入 `rosbag` 录制评估。
 
+## 9.额外说明
+src/small_gazebo_demo实现简单场景的感知-规划-控制全流程，详细内容可见src/small_gazebo_demo/README.md
