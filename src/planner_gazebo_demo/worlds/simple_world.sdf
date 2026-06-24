@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="simple_world">
+    <gravity>0 0 -9.81</gravity>
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
+
+    <!--
+      A deliberately SIMPLE world for practising SLAM mapping:
+      a 10x10 m closed room (4 perimeter walls) + 2 small boxes.
+      Easy to map by hand: the lidar always sees the surrounding walls.
+      Suggested spawn: (-3.5, -3.5), yaw 0.785 (facing into the room).
+    -->
+
+    <!-- ---- 4 perimeter walls (10x10 m room, 1 m tall) ---- -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 5 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>10.4 0.2 1.0</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>10.4 0.2 1.0</size></box></geometry></collision>
+      </link>
+    </model>
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -5 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>10.4 0.2 1.0</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>10.4 0.2 1.0</size></box></geometry></collision>
+      </link>
+    </model>
+    <model name="wall_east">
+      <static>true</static>
+      <pose>5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>0.2 10.4 1.0</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>0.2 10.4 1.0</size></box></geometry></collision>
+      </link>
+    </model>
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>0.2 10.4 1.0</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>0.2 10.4 1.0</size></box></geometry></collision>
+      </link>
+    </model>
+
+    <!-- ---- 2 simple obstacles inside ---- -->
+    <model name="box_center">
+      <static>true</static>
+      <pose>0.5 0.5 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>1.0 1.0 1.0</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>1.0 1.0 1.0</size></box></geometry></collision>
+      </link>
+    </model>
+    <model name="box_small">
+      <static>true</static>
+      <pose>-1.8 2.2 0.4 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><box><size>0.6 0.6 0.8</size></box></geometry></visual>
+        <collision name="c"><geometry><box><size>0.6 0.6 0.8</size></box></geometry></collision>
+      </link>
+    </model>
+  </world>
+</sdf>

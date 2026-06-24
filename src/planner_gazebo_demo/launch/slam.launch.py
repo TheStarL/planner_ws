@@ -23,7 +23,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 
 
@@ -44,7 +44,17 @@ def generate_launch_description():
     env_mitshm = SetEnvironmentVariable("QT_X11_NO_MITSHM", "1")
     env_svga = SetEnvironmentVariable("SVGA_VGPU10", "0")
 
-    world_file = os.path.join(pkg_share, "worlds", "planner_world.sdf")
+    # World + spawn pose are arguments (defaults = the original behaviour). Pass a
+    # different world (e.g. the simple practice world) with world:=simple_world.sdf
+    # and a matching spawn point, without touching the default planner_world.
+    declare_world = DeclareLaunchArgument(
+        "world", default_value="planner_world.sdf",
+        description="World SDF filename under worlds/ (e.g. simple_world.sdf)")
+    declare_sx = DeclareLaunchArgument("spawn_x", default_value="-7.0")
+    declare_sy = DeclareLaunchArgument("spawn_y", default_value="-6.0")
+    declare_syaw = DeclareLaunchArgument("spawn_yaw", default_value="0.706")
+
+    world_file = PathJoinSubstitution([pkg_share, "worlds", LaunchConfiguration("world")])
     urdf_file = os.path.join(pkg_share, "urdf", "ackermann_car.xacro")
     rviz_config = os.path.join(pkg_share, "rviz", "slam.rviz")
     controller_config = os.path.join(pkg_share, "config", "ackermann_control.yaml")
@@ -97,8 +107,10 @@ def generate_launch_description():
         arguments=[
             "-entity", "ackermann_car",
             "-topic", "robot_description",
-            "-x", "-7.0", "-y", "-6.0", "-z", "0.1",
-            "-Y", "0.706",
+            "-x", LaunchConfiguration("spawn_x"),
+            "-y", LaunchConfiguration("spawn_y"),
+            "-z", "0.1",
+            "-Y", LaunchConfiguration("spawn_yaw"),
             "-timeout", "120.0",
         ],
         output="screen",
@@ -198,6 +210,7 @@ def generate_launch_description():
         name="auto_explore",
         condition=IfCondition(explore),
         output="screen",
+        parameters=[{"cruise_speed": 0.15, "max_range": 12.0}],
     )
 
     # --- RViz ---
@@ -221,6 +234,8 @@ def generate_launch_description():
         env_svga,
         declare_gui,
         declare_explore,
+        declare_world,
+        declare_sx, declare_sy, declare_syaw,
         gazebo,
         robot_state_publisher,
         spawn_robot,

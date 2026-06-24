@@ -69,20 +69,29 @@ planner_ws/
     ├── planner_gazebo_demo/           # 轨道 C：Gazebo 物理仿真 + SLAM 建图 + 栅格地图规划
     │   ├── CMakeLists.txt
     │   ├── package.xml                # 依赖 gazebo / slam_toolbox / ackermann_* 等（需 apt 安装）
-    │   ├── urdf/ackermann_car.xacro    # Ackermann 整车模型（含激光雷达、转向/驱动关节）
-    │   ├── worlds/planner_world.sdf     # Gazebo 障碍世界
-    │   ├── config/ackermann_control.yaml# ros2_control 控制器配置
+    │   ├── urdf/ackermann_car.xacro    # Ackermann 整车（1.0×0.42 m 小车身+驾驶舱+4轮+激光雷达，轴距0.9）
+    │   ├── worlds/planner_world.sdf     # Gazebo 障碍世界（16×14 m，18 个静态盒障碍）
+    │   ├── config/ackermann_control.yaml# ros2_control 控制器配置（轴距/轮距需与 URDF 一致）
     │   ├── launch/
-    │   │   ├── slam.launch.py           # 阶段1：Gazebo + 整车 + slam_toolbox 在线建图 + RViz
-    │   │   └── planner.launch.py        # 阶段2：加载已保存 PGM/YAML 地图 + 选定规划器 + RViz
+    │   │   ├── slam.launch.py           # 阶段1：Gazebo + 整车 + 控制器 + relay + slam_toolbox + RViz
+    │   │   │                            #   参数 gui(默认false无头)、explore(默认false,自动建图)
+    │   │   ├── planner.launch.py        # 阶段2：加载 PGM/YAML 地图 + 规划器 + RViz
+    │   │   │                            #   参数 planner、map_yaml、animate(默认true,小车沿路径动)
+    │   │   └── gazebo_closed_loop.launch.py # 全闭环：Gazebo物理小车沿规划路径开到终点
     │   ├── rviz/{slam,planner}.rviz
-    │   ├── maps/                        # SLAM 保存的 PGM+YAML 栅格地图（运行后生成）
+    │   ├── maps/                        # 栅格地图 PGM+YAML（SLAM 保存或脚本生成）
+    │   ├── scripts/
+    │   │   └── world_to_map.py          # 【方法A】直接从 world.sdf 生成占据栅格地图（不用跑 SLAM）
     │   └── src/
     │       ├── map_loader.hpp           # 手写解析 PGM(P5)+YAML，提供栅格碰撞查询
-    │       ├── ackermann_teleop.cpp     # 键盘遥控整车（发 AckermannDriveStamped 到控制器）
-    │       ├── kino_astar_planner.cpp   # 在 OccupancyGrid 上跑 Kino A*，发 nav_msgs/Path
-    │       ├── bspline_planner.cpp      # 栅格地图上 B样条 + ESDF 优化
-    │       └── ego_planner.cpp          # 栅格地图上 EGO(无ESDF) 优化（前端+后端各发一条 Path）
+    │       ├── ackermann_teleop.cpp     # 键盘遥控整车（发 Twist 到 .../reference_unstamped）
+    │       ├── tf_odometry_relay.cpp    # 把控制器私有 ~/tf_odometry 转发到 /tf（补 odom→base_link）
+    │       ├── auto_explore.cpp         # 自动探索建图：以起点为中心的"放射状"巡航（慢速、有界）
+    │       ├── path_player.cpp          # 阶段2：让小车沿 /planner/path 在 RViz 里开（转向+轮子滚）
+    │       ├── gazebo_path_follower.cpp # 全闭环：纯跟踪驱动 Gazebo 物理小车沿 /planner/path 行驶
+    │       ├── kino_astar_planner.cpp   # 前端：栅格上 Kino A*（自行车模型，构造即满足转弯半径）
+    │       ├── bspline_planner.cpp      # 后端：B样条 + ESDF + 曲率约束（已修梯度/限幅）
+    │       └── ego_planner.cpp          # 后端：EGO(无ESDF) + 曲率约束（已修梯度/限幅）
     └── planner_visualization_demo/    # 辅助包：最简 RViz Marker 教学示例
         ├── CMakeLists.txt
         ├── package.xml
@@ -170,7 +179,7 @@ ros2 launch planner_core_demo benchmark.launch.py num_trials:=30 \
 
 ### 3.5 运行命令（轨道 C：Gazebo 物理仿真，`planner_gazebo_demo`）
 
-这是一条**完整的「Gazebo 建图 → 保存地图 → 栅格规划」三阶段流水线**，更贴近真实部署，但依赖较重。
+**「建图 → （存图）→ 在地图上规划」**。建图有两种方式：**方法A 直接从世界生成（秒出、推荐快速）** 或 **方法B 实时 SLAM（演示感知建图）**。
 
 **前置：安装依赖**（本仓库不含这些二进制包，需联网安装）：
 
@@ -178,27 +187,87 @@ ros2 launch planner_core_demo benchmark.launch.py num_trials:=30 \
 sudo apt update && sudo apt install -y \
   ros-humble-gazebo-ros-pkgs ros-humble-gazebo-ros2-control \
   ros-humble-ackermann-steering-controller ros-humble-ackermann-msgs \
-  ros-humble-slam-toolbox ros-humble-nav2-map-server ros-humble-xacro
-colcon build --packages-select planner_gazebo_demo && source install/setup.bash
+  ros-humble-slam-toolbox ros-humble-nav2-map-server ros-humble-xacro \
+  ros-humble-joint-state-publisher python3-pil
+colcon build --packages-select planner_gazebo_demo --symlink-install && source install/setup.bash
 ```
 
-**阶段 1：Gazebo 在线 SLAM 建图**
+#### 节点 / 工具一览
+
+| 名称 | 作用 |
+|---|---|
+| `slam.launch.py` | 阶段1 总启动（Gazebo+整车+控制器+relay+slam_toolbox+RViz）。参数 `gui`(默认 false 无头)、`explore`(默认 false，自动建图) |
+| `planner.launch.py` | 阶段2 总启动（地图+规划器+RViz+小车动画）。参数 `planner`、`map_yaml`、`animate`(默认 true) |
+| `scripts/world_to_map.py` | **方法A**：从 `world.sdf` 直接生成占据栅格地图（不跑 SLAM，1 秒出完整图） |
+| `auto_explore` | **方法B**：自动探索建图（以起点为中心放射状慢速巡航，有界、不跑出场） |
+| `ackermann_teleop` | 键盘遥控（`w/s` 速度、`a/d` 转向、空格停）；发 `Twist` 到 `.../reference_unstamped` |
+| `tf_odometry_relay` | 把控制器私有 `~/tf_odometry` 转发到 `/tf`（补全 `odom→base_link`） |
+| `path_player` | 阶段2 让小车沿 `/planner/path` 在 RViz 里开（前轮转向 + 四轮滚动） |
+| `gazebo_path_follower` | 全闭环：纯跟踪驱动 **Gazebo 物理小车**沿 `/planner/path` 开到终点（`gazebo_closed_loop.launch.py`） |
+| `kino_astar/bspline/ego_planner` | 栅格地图上的前端 / 两个后端规划器 |
+
+#### 方法 A：直接从世界生成地图（推荐快速）
 
 ```bash
-ros2 launch planner_gazebo_demo slam.launch.py          # 起 Gazebo + 整车 + slam_toolbox + RViz
-ros2 run planner_gazebo_demo ackermann_teleop           # 另开终端：w/s 加减速, a/d 转向, 空格停
-# 绕场一周后保存地图：
-ros2 run nav2_map_server map_saver_cli -f src/planner_gazebo_demo/maps/planner_map
+python3 src/planner_gazebo_demo/scripts/world_to_map.py     # 生成 maps/planner_map.{pgm,yaml}
+colcon build --packages-select planner_gazebo_demo --symlink-install && source install/setup.bash
+ros2 launch planner_gazebo_demo planner.launch.py planner:=ego   # 直接规划（见下方阶段2）
 ```
 
-**阶段 2：在保存的栅格地图上规划**（planner 取 `kino_astar` / `bspline` / `ego`）
+#### 方法 B：实时 SLAM 建图（全自动 Gazebo→RViz）
+
+```bash
+# 一条命令：Gazebo + 控制器 + SLAM + RViz + 自动探索（小车自己慢速绕场建图）
+ros2 launch planner_gazebo_demo slam.launch.py explore:=true
+#   想看 Gazebo 窗口：加 gui:=true（WSL 上较慢）
+#   想手动开车：去掉 explore，另开终端 ros2 run planner_gazebo_demo ackermann_teleop
+# 建得差不多后存图（存成 planner_map 给阶段2用）：
+ros2 run nav2_map_server map_saver_cli -f ~/planner_ws/src/planner_gazebo_demo/maps/planner_map
+```
+
+#### 阶段 2：在地图上规划（planner 取 `kino_astar` / `bspline` / `ego`）
 
 ```bash
 ros2 launch planner_gazebo_demo planner.launch.py planner:=ego
+#   静态展示(不动)：animate:=false    指定别的地图：map_yaml:=/abs/path/xxx.yaml
 ```
 
-> 规划器读取 PGM+YAML 占据栅格，发布 `nav_msgs/OccupancyGrid`(`/map`) 与 `nav_msgs/Path`(`/planner/path`)，
-> 在 RViz 用 Map / Path / TF 显示（不再用 Marker）。起点 (-7,-6,0.706 rad)，终点 (7,6)。
+> 规划器读取 PGM+YAML 占据栅格，发布 `/map` 与 `/planner/path`，在 RViz 用 Map/Path/TF/RobotModel 显示。
+> 起点 (-7,-6,0.706 rad)，终点 (7,6)。`animate:=true` 时 `path_player` 驱动小车**沿规划路径慢速行驶**。
+
+#### Gazebo 内全闭环（感知地图 → 规划 → 控制执行）
+
+让 **Gazebo 里的真实物理小车**真的沿规划路径开到终点（不是 RViz 动画，是物理仿真执行）：
+
+```bash
+# 先生成世界对齐的地图（闭环用静态 map->odom 定位，需世界对齐的地图）
+python3 src/planner_gazebo_demo/scripts/world_to_map.py
+colcon build --packages-select planner_gazebo_demo --symlink-install && source install/setup.bash
+# 一条命令：Gazebo+整车+控制器+relay + 静态map->odom定位 + 规划器 + 路径跟踪 + RViz
+ros2 launch planner_gazebo_demo gazebo_closed_loop.launch.py planner:=ego
+```
+
+> 链路：`world_to_map`(感知地图) → `ego_planner`(规划 `/planner/path`) → `gazebo_path_follower`
+> (纯跟踪 → `Twist` → `ackermann` 控制器) → **Gazebo 物理小车沿路径开到终点 (7,6) 自动停车**。
+> 实测：小车从起点平滑驶向终点，目标距离 17.4 m 单调降到 0，到达后停车。
+> 定位用静态 `map→odom`（里程计起点=生成点），短程漂移可忽略；真实系统可换 AMCL/SLAM 闭环校正。
+
+#### ⚠️ WSL2 注意
+
+- 三个 launch 已内置软件渲染环境变量（`LIBGL_ALWAYS_SOFTWARE=1` 等），无需手动 export。
+- Gazebo 默认**无头**（`gui:=false`）以保证启动稳定；要看 Gazebo 窗口加 `gui:=true`。
+
+#### 轨道 C 关键修复记录（这套管线原先从未跑通，逐个修好）
+
+| 症状 | 根因 | 修复 |
+|---|---|---|
+| 控制器不激活 | 用了 `ros2 control`（`ros2controlcli` 未装） | 改用 `controller_manager spawner` |
+| 小车不生成 | WSL 上 gzserver 太慢、`/spawn_entity` 超时 | 无头 + spawn 超时 120s |
+| SLAM 一直丢扫描 | `odom→base_link` 不在 `/tf` | 加 `tf_odometry_relay` |
+| 车不动 | 控制器收 `/reference_unstamped`(Twist)，不是 `/reference` | 改 teleop / 用对话题 |
+| `Failed to compute odom pose` | slam 参数嵌套写错→`base_frame` 没生效（默认 `base_footprint`，车上没有） | 参数改扁平 dict，`base_frame=base_link` |
+| 阶段2 RobotModel/Global Status 报错 | 无 `map→base_link` TF、无 `/joint_states` | 加 `path_player`（或 static TF + joint_state_publisher） |
+| 路径锯齿、曲率超限 100× | 后端曲率梯度漏 Y 分量、无单步限幅 | 补全梯度 + 加 `max_move` 限幅 + 加大平滑（见报告 §11） |
 
 ---
 
@@ -286,7 +355,9 @@ ros2 launch planner_gazebo_demo planner.launch.py planner:=ego
 
 **工程化**
 - [ ] 抽出公共库：把前端 Kino A\*、B样条、ESDF、度量函数提到 `include/planner_core_demo/` 的共享头/库，消除轨道 A/B 间的多文件重复。
-- [x] 与 Gazebo 对接：轨道 C 已通过 `ros2_control` + `ackermann_steering_controller` 驱动整车，并用 `slam_toolbox` 在线建图；后续可把 `/planner/path` 接回闭环控制器形成 Gazebo 内全闭环。
+- [x] 与 Gazebo 对接：轨道 C 已通过 `ros2_control` 驱动整车、`slam_toolbox` 自动建图、`world_to_map.py` 直接生成地图、`path_player` 路径动画，并修复了后端曲率优化 bug（见报告 §11）。
+- [x] **Gazebo 内全闭环（已完成）**：`gazebo_path_follower` 把 `/planner/path` 用纯跟踪接回 `ackermann` 控制器，`gazebo_closed_loop.launch.py` 让 Gazebo 物理小车沿规划路径开到终点自动停车（实测目标距离 17.4 m→0 到达）。
+- [ ] 实时地图上直接规划：把规划器从"读 PGM 文件"改成订阅 `slam_toolbox` 的 `/map`，建图与规划合并为一条流水线。
 - [ ] 把轨道 B 的 `ackermann_closed_loop_demo` 的 `/ackermann_cmd` 真正接到 Gazebo 整车（当前为预留话题）。
 - [ ] 增加单元测试（`ament_cmake_gtest`）与 CI；接入 `rosbag` 录制评估。
 

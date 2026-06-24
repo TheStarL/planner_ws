@@ -136,7 +136,7 @@
     </sensor>
   </gazebo>
 
-  <gazebo reference="base_link">
+  <!-- <gazebo reference="base_link">
     <sensor name="imu_sensor" type="imu">
       <always_on>true</always_on>
       <update_rate>50</update_rate>
@@ -150,6 +150,29 @@
           <x><noise type="gaussian"/><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev></x>
           <y><noise type="gaussian"/><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev></y>
           <z><noise type="gaussian"/><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev></z>
+        </linear_acceleration>
+      </imu>
+      <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+        <ros><remapping>~/out:=/imu</remapping></ros>
+        <frame_name>base_link</frame_name>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo> -->
+  <gazebo reference="base_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <imu>
+        <angular_velocity>
+          <x><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></x>
+          <y><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></y>
+          <z><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></x>
+          <y><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></y>
+          <z><noise type="none"/><mean>0.0</mean><stddev>0.0</stddev><bias_mean>0.0</bias_mean><bias_stddev>0.0</bias_stddev></z>
         </linear_acceleration>
       </imu>
       <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
@@ -212,10 +235,41 @@
   <xacro:rear_wheel  name="rear_right"  x="${-wheelbase/2}" y="${-track/2}"/>
 
   <!-- Gazebo per-link visual materials (Gazebo Classic ignores URDF <material>) -->
-  <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>
+  <!-- <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>
   <gazebo reference="front_left_wheel_link"><material>Gazebo/Black</material></gazebo>
   <gazebo reference="front_right_wheel_link"><material>Gazebo/Black</material></gazebo>
   <gazebo reference="rear_left_wheel_link"><material>Gazebo/Black</material></gazebo>
-  <gazebo reference="rear_right_wheel_link"><material>Gazebo/Black</material></gazebo>
+  <gazebo reference="rear_right_wheel_link"><material>Gazebo/Black</material></gazebo> -->
 
+  <gazebo reference="base_link">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+  
+  <gazebo reference="front_left_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>2.0</mu1>      <mu2>2.0</mu2>      <kp>10000000.0</kp> <kd>1.0</kd>        </gazebo>
+
+  <gazebo reference="front_right_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>2.0</mu1>
+    <mu2>2.0</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+
+  <gazebo reference="rear_left_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>2.0</mu1>
+    <mu2>2.0</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+
+  <gazebo reference="rear_right_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>2.0</mu1>
+    <mu2>2.0</mu2>
+    <kp>10000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
 </robot>

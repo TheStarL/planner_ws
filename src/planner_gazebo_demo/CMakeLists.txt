@@ -32,6 +32,11 @@ add_executable(path_player src/path_player.cpp)
 ament_target_dependencies(path_player
   rclcpp nav_msgs sensor_msgs geometry_msgs tf2_ros)
 
+# --- gazebo_path_follower (drive the real Gazebo car along the planned path) ---
+add_executable(gazebo_path_follower src/gazebo_path_follower.cpp)
+ament_target_dependencies(gazebo_path_follower
+  rclcpp nav_msgs geometry_msgs tf2_ros tf2)
+
 # --- kino_astar_planner ---
 add_executable(kino_astar_planner src/kino_astar_planner.cpp)
 ament_target_dependencies(kino_astar_planner
@@ -55,6 +60,7 @@ install(TARGETS
   tf_odometry_relay
   auto_explore
   path_player
+  gazebo_path_follower
   kino_astar_planner
   bspline_planner
   ego_planner
