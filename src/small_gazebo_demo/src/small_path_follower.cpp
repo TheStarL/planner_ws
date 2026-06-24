@@ -58,11 +58,28 @@ private:
     for (const auto & pose : msg->poses) {
       pts.push_back({pose.pose.position.x, pose.pose.position.y});
     }
-    if (pts.size() >= 2) {
-      path_ = std::move(pts);
-      reached_ = false;
-      RCLCPP_INFO(get_logger(), "received planner path with %zu points.", path_.size());
+    if (pts.size() < 2) return;
+
+    // The planner republishes the same path a few times per second. Re-adopting
+    // it every time would reset reached_ and make the robot re-engage / jitter at
+    // the goal forever. Only adopt a genuinely new path (a real replan).
+    if (sameAsCurrentPath(pts)) return;
+
+    path_ = std::move(pts);
+    reached_ = false;
+    RCLCPP_INFO(get_logger(), "received planner path with %zu points.", path_.size());
+  }
+
+  bool sameAsCurrentPath(const std::vector<Point2> & pts) const
+  {
+    if (pts.size() != path_.size()) return false;
+    for (size_t i = 0; i < pts.size(); ++i) {
+      if (std::abs(pts[i].x - path_[i].x) > 1e-6 ||
+          std::abs(pts[i].y - path_[i].y) > 1e-6) {
+        return false;
+      }
     }
+    return true;
   }
 
   bool lookupPose(double & x, double & y, double & yaw)

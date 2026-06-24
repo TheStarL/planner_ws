@@ -34,6 +34,9 @@ public:
     timer_ = create_wall_timer(
       std::chrono::milliseconds(40), std::bind(&SmallPathPlayer::tick, this));
 
+    hold_x_ = start_x_;
+    hold_y_ = start_y_;
+    hold_yaw_ = start_yaw_;
     publishPose(start_x_, start_y_, start_yaw_);
     RCLCPP_INFO(get_logger(), "small_path_player waiting for /planner/path.");
   }
@@ -54,6 +57,12 @@ private:
     }
     if (pts.size() < 2) return;
 
+    // The planner republishes the same path a few times per second. Restarting
+    // the animation on every message resets the robot to the start ~5x/sec, so
+    // it jitters at the start and never visibly follows the route. Only (re)start
+    // playback when the path actually changes (i.e. a genuine replan).
+    if (sameAsCurrentPath(pts)) return;
+
     path_ = std::move(pts);
     segment_ = 0;
     segment_s_ = 0.0;
@@ -61,6 +70,18 @@ private:
     wheel_angle_ = 0.0;
     playing_ = true;
     RCLCPP_INFO(get_logger(), "playing planner path with %zu points.", path_.size());
+  }
+
+  bool sameAsCurrentPath(const std::vector<Point2> & pts) const
+  {
+    if (pts.size() != path_.size()) return false;
+    for (size_t i = 0; i < pts.size(); ++i) {
+      if (std::abs(pts[i].x - path_[i].x) > 1e-6 ||
+          std::abs(pts[i].y - path_[i].y) > 1e-6) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void publishPose(double x, double y, double yaw)
@@ -86,7 +107,10 @@ private:
   void tick()
   {
     if (!playing_ || path_.size() < 2) {
-      publishPose(start_x_, start_y_, start_yaw_);
+      // Idle: hold the start pose before the first path, and the goal pose after
+      // finishing. Publishing the start pose here would snap the robot back to
+      // the start the instant it reaches the goal.
+      publishPose(hold_x_, hold_y_, hold_yaw_);
       return;
     }
 
@@ -116,6 +140,9 @@ private:
     if (segment_ + 1 >= path_.size()) {
       playing_ = false;
       const auto & p = path_.back();
+      hold_x_ = p.x;
+      hold_y_ = p.y;
+      hold_yaw_ = last_yaw_;
       publishPose(p.x, p.y, last_yaw_);
       RCLCPP_INFO(get_logger(), "planner path animation reached the goal.");
       return;
@@ -144,6 +171,9 @@ private:
   double total_s_ = 0.0;
   double wheel_angle_ = 0.0;
   double last_yaw_ = 0.0;
+  double hold_x_ = 0.0;
+  double hold_y_ = 0.0;
+  double hold_yaw_ = 0.0;
   double play_speed_ = 0.22;
   double wheel_radius_ = 0.07;
   double start_x_ = -2.35;

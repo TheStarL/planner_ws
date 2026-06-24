@@ -43,6 +43,7 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/small_world_to_map.py
+  scripts/gazebo_path_marker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

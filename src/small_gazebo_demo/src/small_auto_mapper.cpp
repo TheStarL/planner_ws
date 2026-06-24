@@ -24,10 +24,6 @@ public:
     front_stop_ = declare_parameter("front_stop", 0.42);
     front_sector_rad_ = declare_parameter("front_sector_rad", 0.45);
 
-    // World/odom-frame waypoints. The diff-drive plugin is configured with
-    // world odometry, so odom coordinates match the small_room.world map.
-    // The policy below stops to turn before translating; this avoids the scan
-    // shearing that created duplicated walls during corners.
     waypoints_ = {
       {2.35, -2.35}, {2.35, 2.35}, {-2.35, 2.35}, {-2.35, -0.65},
       {1.90, -0.65}, {1.90, 1.90}, {-1.90, 1.90}, {-1.90, 0.25},
@@ -43,7 +39,7 @@ public:
     timer_ = create_wall_timer(
       std::chrono::milliseconds(50), std::bind(&SmallAutoMapper::tick, this));
 
-    RCLCPP_INFO(get_logger(), "small_auto_mapper started: slow waypoint sweep for SLAM.");
+    RCLCPP_INFO(get_logger(), "small_auto_mapper started: slow waypoint sweep with Recovery.");
   }
 
 private:
@@ -91,20 +87,35 @@ private:
       return;
     }
 
-    if (have_scan_ && front_range_ < front_stop_) {
-      cmd.angular.z = 0.45;
-      cmd_pub_->publish(cmd);
-      return;
+    // ⭐ 核心修改 1：触发强制脱困模式
+    // 一旦遇到障碍物，不要只转一下，而是触发连续的“倒车+转弯”状态
+    if (have_scan_ && front_range_ < front_stop_ && recovery_ticks_ == 0) {
+      recovery_ticks_ = 35; // 强制执行脱困动作 1.75 秒 (35 * 50ms)
+      
+      // 关键逻辑：前面的路被挡死，直接放弃当前路点，去下一个！
+      current_wp_ = (current_wp_ + 1) % waypoints_.size();
+      RCLCPP_WARN(get_logger(), "前方遇障！已跳过当前路点，执行倒车转向脱困...");
     }
 
+    // ⭐ 核心修改 2：执行连续脱困动作 (优先级最高)
+    if (recovery_ticks_ > 0) {
+      recovery_ticks_--;
+      cmd.linear.x = -0.15;  // 挂倒挡向后退
+      cmd.angular.z = 0.55;  // 倒车的同时大角度打方向盘
+      cmd_pub_->publish(cmd);
+      return; // 直接返回，屏蔽正常的寻路逻辑
+    }
+
+    // --- 下面是正常的寻路逻辑 ---
     const auto & target = waypoints_[current_wp_];
     const double dx = target.first - x_;
     const double dy = target.second - y_;
     const double dist = std::hypot(dx, dy);
+    
     if (dist < waypoint_tol_) {
       current_wp_ = (current_wp_ + 1) % waypoints_.size();
       if (++visited_count_ % waypoints_.size() == 0) {
-        RCLCPP_INFO(get_logger(), "completed one mapping sweep; continuing for denser SLAM updates.");
+        RCLCPP_INFO(get_logger(), "completed one mapping sweep; continuing...");
       }
       cmd_pub_->publish(cmd);
       return;
@@ -114,12 +125,15 @@ private:
     const double yaw_error = wrap(target_yaw - yaw_);
     cmd.angular.z = std::clamp(0.95 * yaw_error, -max_angular_, max_angular_);
 
+    // ⭐ 核心修改 3：修复原地打死逻辑
     if (std::abs(yaw_error) > 0.22) {
-      cmd.linear.x = 0.0;
+      // 保持微小的线速度，防止非全向车轮在原地卡死
+      cmd.linear.x = 0.05; 
     } else {
       cmd.linear.x = linear_speed_;
       cmd.angular.z = std::clamp(0.55 * yaw_error, -0.18, 0.18);
     }
+    
     cmd_pub_->publish(cmd);
   }
 
@@ -142,6 +156,9 @@ private:
   double waypoint_tol_ = 0.22;
   double front_stop_ = 0.42;
   double front_sector_rad_ = 0.45;
+  
+  // 新增：脱困倒计时的定时器变量
+  int recovery_ticks_ = 0; 
 };
 
 int main(int argc, char ** argv)

@@ -12,16 +12,22 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("small_gazebo_demo")
-    default_map = os.path.join(pkg_share, "maps", "small_map.yaml")
+    default_map = os.path.join(pkg_share, "maps", "slam_small_map.yaml")
     rviz_config = os.path.join(pkg_share, "rviz", "planner.rviz")
     urdf_file = os.path.join(pkg_share, "urdf", "small_diffbot.urdf.xacro")
 
     planner = LaunchConfiguration("planner")
     map_yaml = LaunchConfiguration("map_yaml")
+    start_x = LaunchConfiguration("start_x")
+    start_y = LaunchConfiguration("start_y")
+    start_theta = LaunchConfiguration("start_theta")
+    goal_x = LaunchConfiguration("goal_x")
+    goal_y = LaunchConfiguration("goal_y")
 
     declare_planner = DeclareLaunchArgument(
         "planner", default_value="ego",
@@ -30,6 +36,21 @@ def generate_launch_description():
     declare_map = DeclareLaunchArgument(
         "map_yaml", default_value=default_map,
         description="Map from SLAM map_saver, or the generated fallback small_map.yaml.")
+    declare_start_x = DeclareLaunchArgument(
+        "start_x", default_value="1.0",
+        description="Start x in the map frame. Default is inside the saved SLAM room.")
+    declare_start_y = DeclareLaunchArgument(
+        "start_y", default_value="0.8",
+        description="Start y in the map frame. Default is inside the saved SLAM room.")
+    declare_start_theta = DeclareLaunchArgument(
+        "start_theta", default_value="0.0",
+        description="Start yaw in radians.")
+    declare_goal_x = DeclareLaunchArgument(
+        "goal_x", default_value="4.7",
+        description="Goal x in the map frame. Default is near the upper-right room corner.")
+    declare_goal_y = DeclareLaunchArgument(
+        "goal_y", default_value="4.7",
+        description="Goal y in the map frame. Default is near the upper-right room corner.")
 
     robot_state_publisher = Node(
         package="robot_state_publisher",
@@ -44,9 +65,9 @@ def generate_launch_description():
         name="small_path_player",
         parameters=[{
             "play_speed": 0.22,
-            "start_x": -2.35,
-            "start_y": -2.35,
-            "start_yaw": 0.0,
+            "start_x": ParameterValue(start_x, value_type=float),
+            "start_y": ParameterValue(start_y, value_type=float),
+            "start_yaw": ParameterValue(start_theta, value_type=float),
         }],
         output="screen",
     )
@@ -57,11 +78,11 @@ def generate_launch_description():
         name=planner,
         parameters=[{
             "map_yaml": map_yaml,
-            "start_x": -2.35,
-            "start_y": -2.35,
-            "start_theta": 0.0,
-            "goal_x": 2.35,
-            "goal_y": 2.35,
+            "start_x": ParameterValue(start_x, value_type=float),
+            "start_y": ParameterValue(start_y, value_type=float),
+            "start_theta": ParameterValue(start_theta, value_type=float),
+            "goal_x": ParameterValue(goal_x, value_type=float),
+            "goal_y": ParameterValue(goal_y, value_type=float),
         }],
         output="screen",
     )
@@ -81,6 +102,11 @@ def generate_launch_description():
     return LaunchDescription([
         declare_planner,
         declare_map,
+        declare_start_x,
+        declare_start_y,
+        declare_start_theta,
+        declare_goal_x,
+        declare_goal_y,
         robot_state_publisher,
         path_player,
         planner_node,

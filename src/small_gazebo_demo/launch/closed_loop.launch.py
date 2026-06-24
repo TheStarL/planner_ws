@@ -17,13 +17,14 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetE
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("small_gazebo_demo")
     world_file = os.path.join(pkg_share, "worlds", "small_room.world")
     urdf_file = os.path.join(pkg_share, "urdf", "small_diffbot.urdf.xacro")
-    default_map = os.path.join(pkg_share, "maps", "small_map.yaml")
+    default_map = os.path.join(pkg_share, "maps", "slam_small_map.yaml")
     rviz_config = os.path.join(pkg_share, "rviz", "planner.rviz")
 
     env_libgl = SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -36,13 +37,44 @@ def generate_launch_description():
     gui = LaunchConfiguration("gui")
     planner = LaunchConfiguration("planner")
     map_yaml = LaunchConfiguration("map_yaml")
+    map_to_odom_x = LaunchConfiguration("map_to_odom_x")
+    map_to_odom_y = LaunchConfiguration("map_to_odom_y")
+    start_x = LaunchConfiguration("start_x")
+    start_y = LaunchConfiguration("start_y")
+    goal_x = LaunchConfiguration("goal_x")
+    goal_y = LaunchConfiguration("goal_y")
 
     declare_gui = DeclareLaunchArgument("gui", default_value="false")
     declare_planner = DeclareLaunchArgument(
         "planner", default_value="ego", choices=["kino_astar", "bspline", "ego"])
     declare_map = DeclareLaunchArgument(
         "map_yaml", default_value=default_map,
-        description="Saved SLAM map YAML or generated fallback map.")
+        description="Saved SLAM map YAML (default) or generated fallback small_map.yaml.")
+    # The robot spawns at the world room corner (-2.35, -2.35). The diff-drive
+    # plugin reports odometry *relative to the spawn pose*, so at t=0 odom->base_link
+    # is (0, 0): the odom frame origin sits on the spawn corner. The SLAM map was
+    # built starting from that same corner, so the corner is map (0, 0) too -- which
+    # means map->odom is IDENTITY for the SLAM map. (A non-zero offset here shifts the
+    # robot away from the path start in RViz and makes the follower stop early.)
+    # The planner start (0, 0) is that corner; goal (4.7, 4.65) is the opposite corner.
+    declare_m2o_x = DeclareLaunchArgument(
+        "map_to_odom_x", default_value="0.0",
+        description="map->odom x offset. 0.0 for the SLAM map (spawn corner = map origin).")
+    declare_m2o_y = DeclareLaunchArgument(
+        "map_to_odom_y", default_value="0.0",
+        description="map->odom y offset. 0.0 for the SLAM map (spawn corner = map origin).")
+    declare_start_x = DeclareLaunchArgument(
+        "start_x", default_value="0.0",
+        description="Planner start x in the map frame (robot corner + map offset).")
+    declare_start_y = DeclareLaunchArgument(
+        "start_y", default_value="0.0",
+        description="Planner start y in the map frame (robot corner + map offset).")
+    declare_goal_x = DeclareLaunchArgument(
+        "goal_x", default_value="4.7",
+        description="Planner goal x in the map frame (opposite corner).")
+    declare_goal_y = DeclareLaunchArgument(
+        "goal_y", default_value="4.65",
+        description="Planner goal y in the map frame (opposite corner).")
 
     spawn_x = "-2.35"
     spawn_y = "-2.35"
@@ -79,15 +111,17 @@ def generate_launch_description():
         output="screen",
     )
 
-    # The small robot uses Gazebo world odometry, so odom already matches the
-    # generated small-room map frame. Keep map->odom identity; applying the spawn
-    # offset here would double-shift the robot in RViz and in the path follower.
+    # The small robot uses Gazebo world odometry, so odom is the world frame.
+    # The SLAM map frame is shifted from the world frame by map_to_odom_(x,y),
+    # so map->odom must carry that offset (use 0,0 for the world-aligned
+    # small_map). Without it the planner start lands off the SLAM map and the
+    # robot starts in the wrong place.
     map_to_odom = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
         name="small_map_to_odom",
         arguments=[
-            "--x", "0.0", "--y", "0.0", "--z", "0.0",
+            "--x", map_to_odom_x, "--y", map_to_odom_y, "--z", "0.0",
             "--yaw", "0.0",
             "--frame-id", "map", "--child-frame-id", "odom",
         ],
@@ -100,11 +134,11 @@ def generate_launch_description():
         name=planner,
         parameters=[{
             "map_yaml": map_yaml,
-            "start_x": -2.35,
-            "start_y": -2.35,
+            "start_x": ParameterValue(start_x, value_type=float),
+            "start_y": ParameterValue(start_y, value_type=float),
             "start_theta": 0.0,
-            "goal_x": 2.35,
-            "goal_y": 2.35,
+            "goal_x": ParameterValue(goal_x, value_type=float),
+            "goal_y": ParameterValue(goal_y, value_type=float),
         }],
         output="screen",
     )
@@ -118,6 +152,20 @@ def generate_launch_description():
             "cruise_speed": 0.18,
             "lookahead": 0.65,
             "goal_tol": 0.24,
+        }],
+        output="screen",
+    )
+
+    # Draws /planner/path as a green line inside the Gazebo 3D view. The path is in
+    # the map frame; Gazebo renders in the world frame. The map origin (0,0) is the
+    # spawn corner in the world, so world = map + (spawn_x, spawn_y). Only with gui:=true.
+    gazebo_path_marker = Node(
+        package="small_gazebo_demo",
+        executable="gazebo_path_marker.py",
+        name="gazebo_path_marker",
+        parameters=[{
+            "marker_x_offset": float(spawn_x),
+            "marker_y_offset": float(spawn_y),
         }],
         output="screen",
     )
@@ -138,11 +186,13 @@ def generate_launch_description():
     return LaunchDescription([
         env_libgl, env_mitshm, env_svga, env_home, env_gazebo_ip, env_gazebo_master,
         declare_gui, declare_planner, declare_map,
+        declare_m2o_x, declare_m2o_y,
+        declare_start_x, declare_start_y, declare_goal_x, declare_goal_y,
         gazebo,
         robot_state_publisher,
         spawn_robot,
         map_to_odom,
         TimerAction(period=5.0, actions=[planner_node]),
         TimerAction(period=7.0, actions=[rviz]),
-        TimerAction(period=8.0, actions=[follower]),
+        TimerAction(period=8.0, actions=[follower, gazebo_path_marker]),
     ])
