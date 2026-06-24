@@ -15,7 +15,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -24,7 +24,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("small_gazebo_demo")
     world_file = os.path.join(pkg_share, "worlds", "small_room.world")
     urdf_file = os.path.join(pkg_share, "urdf", "small_diffbot.urdf.xacro")
-    default_map = os.path.join(pkg_share, "maps", "slam_small_map.yaml")
+    default_map = os.path.join(pkg_share, "maps", "small_map.yaml")
     rviz_config = os.path.join(pkg_share, "rviz", "planner.rviz")
 
     env_libgl = SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -49,35 +49,33 @@ def generate_launch_description():
         "planner", default_value="ego", choices=["kino_astar", "bspline", "ego"])
     declare_map = DeclareLaunchArgument(
         "map_yaml", default_value=default_map,
-        description="Saved SLAM map YAML (default) or generated fallback small_map.yaml.")
-    # The robot spawns at the world room corner (-2.35, -2.35). The diff-drive
-    # plugin reports odometry *relative to the spawn pose*, so at t=0 odom->base_link
-    # is (0, 0): the odom frame origin sits on the spawn corner. The SLAM map was
-    # built starting from that same corner, so the corner is map (0, 0) too -- which
-    # means map->odom is IDENTITY for the SLAM map. (A non-zero offset here shifts the
-    # robot away from the path start in RViz and makes the follower stop early.)
-    # The planner start (0, 0) is that corner; goal (4.7, 4.65) is the opposite corner.
+        description="World-aligned generated map by default. A saved SLAM map needs explicit frame offsets.")
+    # Closed-loop execution must be world-aligned: the path, Gazebo odometry, and
+    # map frame all need to describe the same coordinates. The default small_map is
+    # generated from the Gazebo world, so map->odom is identity. By default the
+    # physical robot and planner path both start at world/map (0, 0), then drive
+    # to the upper-right free area with enough clearance from the internal boxes.
     declare_m2o_x = DeclareLaunchArgument(
         "map_to_odom_x", default_value="0.0",
-        description="map->odom x offset. 0.0 for the SLAM map (spawn corner = map origin).")
+        description="map->odom x offset. 0.0 for the generated world-aligned small_map.")
     declare_m2o_y = DeclareLaunchArgument(
         "map_to_odom_y", default_value="0.0",
-        description="map->odom y offset. 0.0 for the SLAM map (spawn corner = map origin).")
+        description="map->odom y offset. 0.0 for the generated world-aligned small_map.")
     declare_start_x = DeclareLaunchArgument(
         "start_x", default_value="0.0",
-        description="Planner start x in the map frame (robot corner + map offset).")
+        description="Planner start x in the map frame.")
     declare_start_y = DeclareLaunchArgument(
         "start_y", default_value="0.0",
-        description="Planner start y in the map frame (robot corner + map offset).")
+        description="Planner start y in the map frame.")
     declare_goal_x = DeclareLaunchArgument(
-        "goal_x", default_value="4.7",
-        description="Planner goal x in the map frame (opposite corner).")
+        "goal_x", default_value="2.35",
+        description="Planner goal x in the map frame.")
     declare_goal_y = DeclareLaunchArgument(
-        "goal_y", default_value="4.65",
-        description="Planner goal y in the map frame (opposite corner).")
+        "goal_y", default_value="1.75",
+        description="Planner goal y in the map frame.")
 
-    spawn_x = "-2.35"
-    spawn_y = "-2.35"
+    spawn_x = "0.0"
+    spawn_y = "0.0"
     spawn_yaw = "0.0"
 
     gazebo = IncludeLaunchDescription(
@@ -112,10 +110,8 @@ def generate_launch_description():
     )
 
     # The small robot uses Gazebo world odometry, so odom is the world frame.
-    # The SLAM map frame is shifted from the world frame by map_to_odom_(x,y),
-    # so map->odom must carry that offset (use 0,0 for the world-aligned
-    # small_map). Without it the planner start lands off the SLAM map and the
-    # robot starts in the wrong place.
+    # For the generated small_map, map is also the world frame, so the default is
+    # identity. Saved SLAM maps generally need a non-zero offset here.
     map_to_odom = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
@@ -152,20 +148,23 @@ def generate_launch_description():
             "cruise_speed": 0.18,
             "lookahead": 0.65,
             "goal_tol": 0.24,
+            "odom_frame": "odom",
         }],
         output="screen",
     )
 
-    # Draws /planner/path as a green line inside the Gazebo 3D view. The path is in
-    # the map frame; Gazebo renders in the world frame. The map origin (0,0) is the
-    # spawn corner in the world, so world = map + (spawn_x, spawn_y). Only with gui:=true.
+    # Draw /planner/path as a green line inside the Gazebo 3D view. Gazebo renders
+    # in world/odom coordinates, while /planner/path is in map. Since map->odom is
+    # t, world = map - t, so the marker offset is -map_to_odom.
     gazebo_path_marker = Node(
         package="small_gazebo_demo",
         executable="gazebo_path_marker.py",
         name="gazebo_path_marker",
         parameters=[{
-            "marker_x_offset": float(spawn_x),
-            "marker_y_offset": float(spawn_y),
+            "marker_x_offset": ParameterValue(
+                PythonExpression(["-1.0 * ", map_to_odom_x]), value_type=float),
+            "marker_y_offset": ParameterValue(
+                PythonExpression(["-1.0 * ", map_to_odom_y]), value_type=float),
         }],
         output="screen",
     )

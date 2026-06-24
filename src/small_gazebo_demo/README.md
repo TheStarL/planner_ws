@@ -25,7 +25,8 @@ ros2 run nav2_map_server map_saver_cli -f ~/planner_ws/src/small_gazebo_demo/map
 # 3. Plan + RViz playback (no Gazebo). Default map is the SLAM map.
 ros2 launch small_gazebo_demo planner.launch.py planner:=ego
 
-# 4. Full closed loop: planner path driven by the robot in Gazebo.
+# 4. Closed-loop execution: planner path driven by the robot in Gazebo.
+#    Default starts the robot and route at (0,0), then follows a nontrivial route.
 ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego            # headless
 ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego gui:=true  # see the green path line in Gazebo
 ```
@@ -85,30 +86,38 @@ ros2 launch small_gazebo_demo planner.launch.py planner:=ego \
 ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego
 ```
 
-This launches Gazebo again, loads the SLAM map into the existing planner, publishes `/planner/path`, and uses `small_path_follower` to drive the simple robot along that path through `/cmd_vel`.
+This launches Gazebo again, loads a map into the existing planner, publishes `/planner/path`, and uses `small_path_follower` to drive the simple robot along that path through `/cmd_vel`.
 
-Coordinate frames matter here. The robot spawns at the world room corner
-`(-2.35, -2.35)`, and the diff-drive plugin reports **odometry relative to the spawn
-pose** — at `t=0`, `odom -> base_link` is `(0, 0)`. So the `odom` frame origin sits on
-the spawn corner, and `map -> base_link` at spawn equals `map -> odom`.
+The default closed-loop map is the generated `small_map`, not the saved SLAM map.
+That is intentional: `small_map` is built directly in the Gazebo world frame, and
+the robot publishes Gazebo world odometry. Therefore `/planner/path`, `/odom`, RViz,
+and Gazebo all use the same coordinates:
 
-The SLAM map was built starting from that same corner, so the corner is `map (0, 0)`.
-That means **`map -> odom` is identity `(0, 0)`** for the SLAM map, the planner `start`
-is `(0, 0)` (the corner), and `goal` is `(4.7, 4.65)` (the opposite corner). These are
-the defaults. The general rule: `map_to_odom_(x,y)` should equal the planner `start`,
-because the robot's spawn-relative odom is `(0,0)` and you want it to appear at `start`.
-(An earlier version wrongly set `map -> odom = (2.35, 2.30)`, which shifted the robot off
-the path start in RViz and made the follower stop early.)
+- `map -> odom = identity`
+- robot spawn / planner start `(0, 0)`
+- goal `(2.35, 1.75)`
 
-The generated `small_map` is built directly in the world frame, so the robot's spawn
-corner is `small_map (-2.35, -2.35)`; set `map_to_odom` and `start` to match:
+This is the command you should use for physical Gazebo execution:
 
 ```bash
-ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego \
-  map_yaml:=$HOME/planner_ws/src/small_gazebo_demo/maps/small_map.yaml \
-  map_to_odom_x:=-2.35 map_to_odom_y:=-2.35 \
-  start_x:=-2.35 start_y:=-2.35 goal_x:=2.35 goal_y:=2.35
+ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego gui:=true
 ```
+
+`small_map.yaml` is a deterministic Gazebo-world map, so this closed-loop command
+is the **planning + control execution** half of the pipeline. It is not the online
+SLAM map produced by `slam.launch.py`.
+
+You can still use a saved `slam_small_map.yaml`, but it is not world-aligned by
+default. You must supply the matching `map_to_odom_x/y`, `start_x/y`, and
+`goal_x/y` for that saved map. Otherwise RViz may appear to reach the map-frame
+goal while the Gazebo robot is physically somewhere else.
+
+`small_path_follower` reads the physical `/odom` topic and only uses `map->odom`
+for frame conversion. It deliberately does not lookup `map->base_link`, because
+the RViz-only `small_path_player` also publishes that TF during planner playback.
+If a playback process is accidentally left running, direct `map->base_link`
+lookup can make the follower think the robot has reached the goal while the
+Gazebo car is still mid-route.
 
 ### Showing the planned route inside Gazebo
 

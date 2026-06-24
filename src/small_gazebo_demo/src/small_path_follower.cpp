@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "geometry_msgs/msg/twist.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/buffer.h"
@@ -25,9 +26,12 @@ public:
     lookahead_ = declare_parameter("lookahead", 0.65);
     goal_tol_ = declare_parameter("goal_tol", 0.22);
     map_frame_ = declare_parameter("map_frame", std::string("map"));
-    base_frame_ = declare_parameter("base_frame", std::string("base_link"));
+    odom_frame_ = declare_parameter("odom_frame", std::string("odom"));
 
     cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/odom", 20,
+      std::bind(&SmallPathFollower::odomCallback, this, std::placeholders::_1));
     path_sub_ = create_subscription<nav_msgs::msg::Path>(
       "/planner/path", rclcpp::QoS(10),
       std::bind(&SmallPathFollower::pathCallback, this, std::placeholders::_1));
@@ -49,6 +53,23 @@ private:
     while (a > M_PI) a -= 2.0 * M_PI;
     while (a < -M_PI) a += 2.0 * M_PI;
     return a;
+  }
+
+  static double yawFromQuat(
+    double x, double y, double z, double w)
+  {
+    return std::atan2(
+      2.0 * (w * z + x * y),
+      1.0 - 2.0 * (y * y + z * z));
+  }
+
+  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+  {
+    odom_x_ = msg->pose.pose.position.x;
+    odom_y_ = msg->pose.pose.position.y;
+    const auto & q = msg->pose.pose.orientation;
+    odom_yaw_ = yawFromQuat(q.x, q.y, q.z, q.w);
+    have_odom_ = true;
   }
 
   void pathCallback(const nav_msgs::msg::Path::SharedPtr msg)
@@ -84,18 +105,33 @@ private:
 
   bool lookupPose(double & x, double & y, double & yaw)
   {
-    try {
-      const auto tf = tf_buffer_.lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
-      x = tf.transform.translation.x;
-      y = tf.transform.translation.y;
-      const auto & q = tf.transform.rotation;
-      yaw = std::atan2(
-        2.0 * (q.w * q.z + q.x * q.y),
-        1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-      return true;
-    } catch (const std::exception &) {
+    if (!have_odom_) {
       return false;
     }
+
+    // Use Gazebo's physical /odom as the pose source, then transform odom into
+    // the map frame. Do not lookup map->base_link directly: RViz-only playback
+    // nodes can also publish that TF and make the follower think the physical
+    // robot has reached the goal while Gazebo is still mid-route.
+    double tx = 0.0;
+    double ty = 0.0;
+    double tyaw = 0.0;
+    try {
+      const auto tf = tf_buffer_.lookupTransform(map_frame_, odom_frame_, tf2::TimePointZero);
+      tx = tf.transform.translation.x;
+      ty = tf.transform.translation.y;
+      const auto & q = tf.transform.rotation;
+      tyaw = yawFromQuat(q.x, q.y, q.z, q.w);
+    } catch (const std::exception &) {
+      // Keep identity map->odom as a safe fallback for the generated small_map.
+    }
+
+    const double c = std::cos(tyaw);
+    const double s = std::sin(tyaw);
+    x = tx + c * odom_x_ - s * odom_y_;
+    y = ty + s * odom_x_ + c * odom_y_;
+    yaw = wrap(tyaw + odom_yaw_);
+    return true;
   }
 
   void tick()
@@ -155,6 +191,7 @@ private:
   }
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   tf2_ros::Buffer tf_buffer_;
@@ -162,13 +199,17 @@ private:
 
   std::vector<Point2> path_;
   bool reached_ = false;
+  bool have_odom_ = false;
   int log_count_ = 0;
+  double odom_x_ = 0.0;
+  double odom_y_ = 0.0;
+  double odom_yaw_ = 0.0;
   double cruise_speed_ = 0.18;
   double max_angular_ = 0.85;
   double lookahead_ = 0.65;
   double goal_tol_ = 0.22;
   std::string map_frame_ = "map";
-  std::string base_frame_ = "base_link";
+  std::string odom_frame_ = "odom";
 };
 
 int main(int argc, char ** argv)
