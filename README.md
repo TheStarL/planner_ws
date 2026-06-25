@@ -7,13 +7,19 @@
 > 本 README 是**团队协作主文档**：包含每个文件的职责、运行方式、参数、可视化说明、代码结构与后续改进点。
 > 详细实验数据见 [`report/性能评估报告.md`](report/性能评估报告.md)。
 
-项目目前包含**三条互补的实现轨道**，覆盖同一套 Fast-Planner / EGO-Planner 算法：
+项目目前包含**四条互补的实现轨道**，覆盖同一套 Fast-Planner / EGO-Planner 算法：
 
 | 轨道 | 所在包 | 机器人模型 | 依赖 | 在本机能否运行 |
 |---|---|---|---|---|
 | **A. 质点轨道** | `planner_core_demo`（`*_demo`） | 3D 二阶积分点质量 | 仅 `rclcpp` + 标准消息 | ✅ 可直接编译运行 |
 | **B. 车辆（Ackermann）轨道** | `planner_core_demo`（`ackermann_*`） | 2D 自行车模型 + 纯跟踪 | 仅 `rclcpp` + 标准消息 | ✅ 可直接编译运行 |
-| **C. Gazebo 物理仿真** | `planner_gazebo_demo` | URDF Ackermann 整车 + SLAM 建图 | Gazebo / slam_toolbox 等 | ⚠️ 需先 `apt` 安装依赖（见 §3.4） |
+| **C. Gazebo 物理仿真（Ackermann）** | `planner_gazebo_demo` | URDF Ackermann 整车 + SLAM 建图 | Gazebo / slam_toolbox 等 | ⚠️ 需先 `apt` 安装依赖（见 §3.5） |
+| **D. Gazebo 简单全流程（差速小车）** | `small_gazebo_demo` | URDF 差速小车 + 2D LiDAR + SLAM | Gazebo / slam_toolbox 等 | ⚠️ 需先 `apt` 安装依赖（同轨道 C） |
+
+> **轨道 C vs 轨道 D**：两者都是 Gazebo 整车物理仿真。轨道 C 用 Ackermann 整车，演示完整但调试成本高；
+> 轨道 D（`small_gazebo_demo`）刻意用**简单差速小车 + 小房间**，把「Gazebo→2D LiDAR/里程计→SLAM 建图→
+> RViz→规划路径→Gazebo 执行」整条链路跑稳，作为**可靠的演示/兜底管线**（详见 §3.6 与
+> [`src/small_gazebo_demo/README.md`](src/small_gazebo_demo/README.md)）。
 
 - **环境**：Ubuntu 22.04 · ROS 2 Humble · colcon · C++17
 - **轨道 A/B**：仅依赖 `rclcpp` 与标准消息，无第三方库，开箱即编。
@@ -92,6 +98,25 @@ planner_ws/
     │       ├── kino_astar_planner.cpp   # 前端：栅格上 Kino A*（自行车模型，构造即满足转弯半径）
     │       ├── bspline_planner.cpp      # 后端：B样条 + ESDF + 曲率约束（已修梯度/限幅）
     │       └── ego_planner.cpp          # 后端：EGO(无ESDF) + 曲率约束（已修梯度/限幅）
+    ├── small_gazebo_demo/             # 轨道 D：简单差速小车 Gazebo→SLAM→规划→执行 全流程
+    │   ├── CMakeLists.txt
+    │   ├── package.xml                # 依赖 gazebo / slam_toolbox / nav2_map_server 等（需 apt 安装）
+    │   ├── urdf/small_diffbot.urdf.xacro # 差速小车（0.42×0.30 车身+2 驱动轮+万向轮+360 线 2D 雷达）
+    │   ├── worlds/small_room.world     # 6×6 m 小房间：四面墙 + 3 个内部盒障碍
+    │   ├── launch/
+    │   │   ├── slam.launch.py          # Gazebo + 小车 + slam_toolbox + 自动建图 + RViz
+    │   │   ├── planner.launch.py       # RViz-only 全流程：加载地图 + 规划 + 小车沿路径动画
+    │   │   └── closed_loop.launch.py   # 在 planner 基础上加 Gazebo 实时同步：物理小车沿路径执行
+    │   ├── rviz/{slam,planner}.rviz
+    │   ├── maps/                       # small_map（从世界生成）/ slam_small_map（SLAM 保存）
+    │   ├── scripts/
+    │   │   ├── small_world_to_map.py   # 从 world 直接生成世界对齐占据栅格地图
+    │   │   └── gazebo_path_marker.py   # 把 /planner/path 画进 Gazebo 3D 视图（gz marker 绿线）
+    │   └── src/
+    │       ├── small_auto_mapper.cpp   # 慢速「停-转-走」确定性建图巡航
+    │       ├── small_scan_filter.cpp   # 激光预处理
+    │       ├── small_path_player.cpp   # planner.launch：发 map→base_link TF 驱动小车在 RViz 沿路径动
+    │       └── small_path_follower.cpp # closed_loop：纯跟踪读 /odom，发 /cmd_vel 驱动 Gazebo 物理小车
     └── planner_visualization_demo/    # 辅助包：最简 RViz Marker 教学示例
         ├── CMakeLists.txt
         ├── package.xml
@@ -269,6 +294,45 @@ ros2 launch planner_gazebo_demo gazebo_closed_loop.launch.py planner:=ego
 | 阶段2 RobotModel/Global Status 报错 | 无 `map→base_link` TF、无 `/joint_states` | 加 `path_player`（或 static TF + joint_state_publisher） |
 | 路径锯齿、曲率超限 100× | 后端曲率梯度漏 Y 分量、无单步限幅 | 补全梯度 + 加 `max_move` 限幅 + 加大平滑（见报告 §11） |
 
+### 3.6 运行命令（轨道 D：简单差速小车全流程，`small_gazebo_demo`）
+
+轨道 D 用**简单差速小车 + 6×6 m 小房间**把整条管线跑稳，整体是一条
+**Gazebo → 2D LiDAR/里程计 → SLAM 建图 → RViz → 规划路径 → Gazebo 执行**的全流程。
+依赖与轨道 C 相同（Gazebo / slam_toolbox / nav2_map_server 等，需先 `apt` 安装，见 §3.5）。
+
+```bash
+cd ~/planner_ws
+colcon build --packages-select small_gazebo_demo planner_gazebo_demo --symlink-install
+source install/setup.bash
+
+# 0. 每次开跑前先清干净（避免上一轮残留的规划器/Gazebo 进程）
+pkill -9 -f 'ego_planner|small_path|small_auto'; pkill -9 -f 'gzserver|gzclient|rviz2|gazebo'
+
+# 1. 建图全流程：Gazebo → 2D LiDAR/里程计 → SLAM → RViz，建好后存图
+ros2 launch small_gazebo_demo slam.launch.py
+ros2 run nav2_map_server map_saver_cli -f src/small_gazebo_demo/maps/slam_small_map
+
+# 2. 在地图上规划并在 RViz 中展示：规划 /planner/path，小车沿路径运动
+ros2 launch small_gazebo_demo planner.launch.py planner:=ego
+
+# 3. 闭环执行：在 2 的基础上加 RViz↔Gazebo 实时同步，物理小车沿规划路径行驶
+ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego            # 无头
+ros2 launch small_gazebo_demo closed_loop.launch.py planner:=ego gui:=true  # 看 Gazebo 窗口里的绿色路径线
+```
+
+`planner` 可取 `kino_astar` / `bspline` / `ego`（复用 `planner_gazebo_demo` 的规划器实现）。
+
+- **整条管线建立在 Gazebo 之上**：地图来自第 1 步 Gazebo→SLAM，小车模型、激光、里程计都由 Gazebo 提供。
+- **`planner.launch.py`**：在 SLAM 地图（`slam_small_map`，起点 `(1.0, 0.8)`）上规划，`small_path_player`
+  发布移动的 `map→base_link` TF + 轮关节状态，让小车在 **RViz** 中沿 `/planner/path` 运动。
+- **`closed_loop.launch.py`**：在此之上实现 **RViz 与 Gazebo 实时同步**——`small_path_follower` 用纯跟踪
+  读 `/odom`、发 `/cmd_vel`，驱动 Gazebo 物理小车沿同一条 `/planner/path` 行驶。它默认改用**世界对齐**的
+  `small_map`（`map→odom=identity`，小车与起点同在世界原点 `(0,0)`），故**起点与 `planner.launch` 不同**。
+- **在 Gazebo 中显示规划路径**：`closed_loop` 会运行 `gazebo_path_marker`，用 `gz marker` 把
+  `/planner/path` 画成绿色 `LINE_STRIP`；Gazebo marker 由 GUI 渲染，需 `gui:=true` 才能看到。
+- 任意时刻**只跑一个规划器 launch**；若路径左右摆动或小车不动，多半是上一轮的 `ego_planner` 残留，
+  按上面第 0 步清理（详见 `src/small_gazebo_demo/README.md` 的 Troubleshooting）。
+
 ---
 
 ## 4. RViz 可视化图例
@@ -360,6 +424,3 @@ ros2 launch planner_gazebo_demo gazebo_closed_loop.launch.py planner:=ego
 - [ ] 实时地图上直接规划：把规划器从"读 PGM 文件"改成订阅 `slam_toolbox` 的 `/map`，建图与规划合并为一条流水线。
 - [ ] 把轨道 B 的 `ackermann_closed_loop_demo` 的 `/ackermann_cmd` 真正接到 Gazebo 整车（当前为预留话题）。
 - [ ] 增加单元测试（`ament_cmake_gtest`）与 CI；接入 `rosbag` 录制评估。
-
-## 9.额外说明
-src/small_gazebo_demo实现简单场景的感知-规划-控制全流程，详细内容可见src/small_gazebo_demo/README.md
